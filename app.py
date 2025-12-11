@@ -1,16 +1,16 @@
-#!/usr/bin/env python3
 import mysql.connector
 from mysql.connector import Error
+from datetime import date
 
-# ----------------- DB CONFIG ----------------- #
+#DB CONFIG
 
 DB_HOST = "127.0.0.1"
 DB_USER = "root"
-DB_PASS = "SwiftBrev21!"   # <-- change this
+DB_PASS = "SwiftBrev21!"   # <-- change if needed
 DB_NAME = "fitlog"
 
 
-# ----------------- CONNECTION HELPERS ----------------- #
+#CONNECTION HELPERS
 
 def connect_no_db():
     """Connect to MySQL server without specifying a database."""
@@ -31,7 +31,7 @@ def connect_with_db():
     )
 
 
-# ----------------- SETUP FUNCTIONS ----------------- #
+#SETUP FUNCTIONS
 
 def ensure_database():
     """Create the fitlog database if it does not exist."""
@@ -269,6 +269,97 @@ def ensure_tables(conn):
         );
     """)
 
+    # countries
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS countries (
+            country_id   INT AUTO_INCREMENT PRIMARY KEY,
+            country_name VARCHAR(255) NOT NULL,
+            iso_code     CHAR(3)
+        );
+    """)
+
+    # country_nutrition_stats
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS country_nutrition_stats (
+            stat_id        INT AUTO_INCREMENT PRIMARY KEY,
+            country_id     INT NOT NULL,
+            year           INT NOT NULL,
+            obesity_rate   DECIMAL(5,2),
+            diabetes_rate  DECIMAL(5,2),
+            data_source_id INT,
+            FOREIGN KEY (country_id)     REFERENCES countries(country_id),
+            FOREIGN KEY (data_source_id) REFERENCES data_sources(data_source_id)
+        );
+    """)
+
+    # roles
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS roles (
+            role_id   INT AUTO_INCREMENT PRIMARY KEY,
+            role_name VARCHAR(100) NOT NULL UNIQUE
+        );
+    """)
+
+    # permissions
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS permissions (
+            permission_id   INT AUTO_INCREMENT PRIMARY KEY,
+            permission_name VARCHAR(100) NOT NULL UNIQUE
+        );
+    """)
+
+    # role_permissions
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS role_permissions (
+            role_id       INT NOT NULL,
+            permission_id INT NOT NULL,
+            PRIMARY KEY (role_id, permission_id),
+            FOREIGN KEY (role_id)       REFERENCES roles(role_id),
+            FOREIGN KEY (permission_id) REFERENCES permissions(permission_id)
+        );
+    """)
+
+    # user_roles
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_roles (
+            user_id INT NOT NULL,
+            role_id INT NOT NULL,
+            PRIMARY KEY (user_id, role_id),
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (role_id) REFERENCES roles(role_id)
+        );
+    """)
+
+    # food_tags
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS food_tags (
+            tag_id   INT AUTO_INCREMENT PRIMARY KEY,
+            tag_name VARCHAR(100) NOT NULL UNIQUE
+        );
+    """)
+
+    # food_tag_map
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS food_tag_map (
+            food_id INT NOT NULL,
+            tag_id  INT NOT NULL,
+            PRIMARY KEY (food_id, tag_id),
+            FOREIGN KEY (food_id) REFERENCES foods(food_id),
+            FOREIGN KEY (tag_id)  REFERENCES food_tags(tag_id)
+        );
+    """)
+
+    # user_favorite_foods
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_favorite_foods (
+            user_id INT NOT NULL,
+            food_id INT NOT NULL,
+            PRIMARY KEY (user_id, food_id),
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (food_id) REFERENCES foods(food_id)
+        );
+    """)
+
     conn.commit()
     cur.close()
 
@@ -283,95 +374,100 @@ def table_empty(conn, table_name: str) -> bool:
 
 
 def insert_sample_data(conn):
-    """Insert a few sample rows so the demo query has something to show."""
+    """
+    Sample data seeding (currently NOT called from main).
+    You already inserted your own sample data via SQL, so this
+    function is kept only for reference.
+    """
     cur = conn.cursor()
 
-    # data_sources
-    if table_empty(conn, "data_sources"):
+    if table_empty(conn, "roles"):
         cur.execute("""
-            INSERT INTO data_sources (source_name, source_url) VALUES
-              ('Kaggle Food Nutrition Dataset',
-               'https://www.kaggle.com/datasets/utsavdey1410/food-nutrition-dataset'),
-              ('Fast Food Nutrition Dataset',
-               'https://www.kaggle.com/datasets/ulrikthygepedersen/fastfood-nutrition');
+            INSERT INTO roles (role_name) VALUES
+              ('user'),
+              ('admin');
         """)
 
-    # categories
-    if table_empty(conn, "categories"):
+    if table_empty(conn, "permissions"):
         cur.execute("""
-            INSERT INTO categories (category_name) VALUES
-              ('Fruit'),
-              ('Fast Food');
+            INSERT INTO permissions (permission_name) VALUES
+              ('log_meal'),
+              ('view_analytics'),
+              ('manage_users');
         """)
 
-    # nutrients
-    if table_empty(conn, "nutrients"):
+    if table_empty(conn, "role_permissions"):
         cur.execute("""
-            INSERT INTO nutrients (nutrient_name, unit_name) VALUES
-              ('Calories', 'kcal'),
-              ('Protein',  'g');
+            INSERT INTO role_permissions (role_id, permission_id)
+            SELECT r.role_id, p.permission_id
+            FROM roles r, permissions p
+            WHERE r.role_name = 'user'
+              AND p.permission_name IN ('log_meal', 'view_analytics');
+        """)
+        cur.execute("""
+            INSERT INTO role_permissions (role_id, permission_id)
+            SELECT r.role_id, p.permission_id
+            FROM roles r, permissions p
+            WHERE r.role_name = 'admin';
         """)
 
-    # foods
-    if table_empty(conn, "foods"):
+    if table_empty(conn, "food_tags"):
         cur.execute("""
-            INSERT INTO foods (food_name, brand_or_source, category_id, data_source_id) VALUES
-              ('Apple, raw', 'USDA', 1, 1),
-              ('Big Mac',    'McDonald''s', 2, 2);
-        """)
-
-    # food_nutrients
-    if table_empty(conn, "food_nutrients"):
-        cur.execute("""
-            INSERT INTO food_nutrients (food_id, nutrient_id, amount_per_100g) VALUES
-              (1, 1, 52.00),    -- Apple calories
-              (1, 2, 0.26),     -- Apple protein
-              (2, 1, 257.00),   -- Big Mac calories (example)
-              (2, 2, 12.00);    -- Big Mac protein (example)
-        """)
-
-    # fastfood_restaurants
-    if table_empty(conn, "fastfood_restaurants"):
-        cur.execute("""
-            INSERT INTO fastfood_restaurants (restaurant_name) VALUES
-              ('McDonald''s');
-        """)
-
-    # fastfood_items
-    if table_empty(conn, "fastfood_items"):
-        cur.execute("""
-            INSERT INTO fastfood_items (food_id, restaurant_id, original_item_name) VALUES
-              (2, 1, 'Big Mac');
-        """)
-
-    # users
-    if table_empty(conn, "users"):
-        cur.execute("""
-            INSERT INTO users (email, password_hash, created_at) VALUES
-              ('test@example.com', 'fakehash', CURDATE());
-        """)
-
-    # user_meal_logs
-    if table_empty(conn, "user_meal_logs"):
-        cur.execute("""
-            INSERT INTO user_meal_logs (user_id, meal_date, meal_type) VALUES
-              (1, CURDATE(), 'lunch');
-        """)
-
-    # user_meal_items
-    if table_empty(conn, "user_meal_items"):
-        cur.execute("""
-            INSERT INTO user_meal_items (meal_log_id, food_id, serving_amount, serving_unit) VALUES
-              (1, 2, 1.00, 'sandwich'),
-              (1, 1, 150.00, 'g');
+            INSERT INTO food_tags (tag_name) VALUES
+              ('high_protein'),
+              ('high_calorie'),
+              ('healthy');
         """)
 
     conn.commit()
     cur.close()
 
 
+#AUDIT & ANALYTICS HELPERS
+def log_action(conn, user_id, action, details):
+    """Insert an audit log entry."""
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO audit_log (user_id, action, details)
+        VALUES (%s, %s, %s);
+    """, (user_id, action, details))
+    conn.commit()
+    cur.close()
+
+def show_weight_history(conn, user_id):
+    """Analytical View: Show user's weight history ordered by date."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT weigh_date, weight_kg
+        FROM user_weight_logs
+        WHERE user_id = %s
+        ORDER BY weigh_date DESC
+        LIMIT 30;
+    """, (user_id,))
+    rows = cur.fetchall()
+    cur.close()
+
+    if not rows:
+        print("\nNo weight entries logged yet.\n")
+        return
+
+    print("\n--- Weight History (latest first) ---")
+    prev = None
+    for d, w in rows:
+        line = f"{d}: {w:.1f} kg"
+        if prev is not None:
+            diff = w - prev
+            if diff > 0:
+                line += f"  (+{diff:.1f})"
+            elif diff < 0:
+                line += f"  ({diff:.1f})"
+        print(line)
+        prev = w
+    print()
+
+
 def show_sample_data(conn):
-    """Run a sample query that joins several tables and prints output."""
+    """Analytical view #1: foods with nutrients (per 100g)."""
     cur = conn.cursor()
     cur.execute("""
         SELECT f.food_name,
@@ -381,22 +477,240 @@ def show_sample_data(conn):
         FROM foods f
         JOIN food_nutrients fn ON f.food_id = fn.food_id
         JOIN nutrients n       ON fn.nutrient_id = n.nutrient_id
-        ORDER BY f.food_name, n.nutrient_name
-        LIMIT 10;
+        ORDER BY f.food_id, n.nutrient_name
+        LIMIT 20;
     """)
 
     rows = cur.fetchall()
-    print("Sample foods with nutrients (per 100g):")
+    print("\nSample foods with nutrients (per 100g):")
     for food_name, nutrient_name, amt, unit in rows:
-        print(f"- {food_name}: {amt} {unit} of {nutrient_name}")
+        print(f"- {food_name}: {amt:.2f} {unit} of {nutrient_name}")
 
     cur.close()
 
 
-# ----------------- MAIN ----------------- #
+def show_user_daily_summary(conn, user_id):
+    """
+    Analytical view #2: total calories and protein for a given user on a given date.
+    Assumes:
+      - serving_amount is in grams when serving_unit = 'g'
+      - food_nutrients.amount_per_100g is per 100g of food
+    """
+    cur = conn.cursor()
+
+    date_str = input(
+        "\nEnter date for summary (YYYY-MM-DD) or press Enter for today: "
+    ).strip()
+    if not date_str:
+        date_str = date.today().strftime("%Y-%m-%d")
+
+    query = """
+        SELECT
+            uml.meal_date,
+            SUM(
+                CASE
+                    WHEN n.nutrient_name = 'Calories'
+                    THEN fn.amount_per_100g * (umi.serving_amount / 100.0)
+                    ELSE 0
+                END
+            ) AS total_calories,
+            SUM(
+                CASE
+                    WHEN n.nutrient_name = 'Protein'
+                    THEN fn.amount_per_100g * (umi.serving_amount / 100.0)
+                    ELSE 0
+                END
+            ) AS total_protein
+        FROM user_meal_logs uml
+        JOIN user_meal_items umi ON uml.meal_log_id = umi.meal_log_id
+        JOIN foods f             ON umi.food_id = f.food_id
+        JOIN food_nutrients fn   ON f.food_id = fn.food_id
+        JOIN nutrients n         ON fn.nutrient_id = n.nutrient_id
+        WHERE uml.user_id = %s
+          AND uml.meal_date = %s
+        GROUP BY uml.meal_date;
+    """
+
+    cur.execute(query, (user_id, date_str))
+    row = cur.fetchone()
+    cur.close()
+
+    if row:
+        day, total_cal, total_protein = row
+        print(f"\nDaily summary for user {user_id} on {day}:")
+        print(f"  Calories: {float(total_cal):.1f} kcal")
+        print(f"  Protein:  {float(total_protein):.1f} g\n")
+    else:
+        print(f"\nNo logged meals for user {user_id} on {date_str}.\n")
+
+
+def show_top_calorie_foods(conn):
+    """Analytical view #3: Top 5 highest-calorie foods per 100g."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT f.food_name, fn.amount_per_100g AS kcal_100g
+        FROM foods f
+        JOIN food_nutrients fn ON f.food_id = fn.food_id
+        JOIN nutrients n       ON fn.nutrient_id = n.nutrient_id
+        WHERE n.nutrient_name = 'Calories'
+        ORDER BY fn.amount_per_100g DESC
+        LIMIT 5;
+    """)
+    rows = cur.fetchall()
+    print("\nTop 5 highest-calorie foods (per 100g):")
+    for name, kcal in rows:
+        print(f"- {name}: {float(kcal):.1f} kcal / 100g")
+    print()
+    cur.close()
+
+
+def show_global_obesity_stats(conn):
+    """Analytical view #4: list countries by obesity rate using the country dataset."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT c.country_name, s.obesity_rate
+        FROM country_nutrition_stats s
+        JOIN countries c ON s.country_id = c.country_id
+        ORDER BY s.obesity_rate DESC;
+    """)
+    rows = cur.fetchall()
+    cur.close()
+
+    if not rows:
+        print("\nNo country nutrition stats found.\n")
+        return
+
+    print("\nGlobal obesity statistics (highest to lowest):")
+    for name, rate in rows:
+        print(f"- {name}: {float(rate):.1f}%")
+    print()
+
+
+#AUTH & INTERACTIVE WRITE ACTIONS
+
+def login_or_signup(conn):
+    """Basic access control: login or create an account."""
+    cur = conn.cursor()
+
+    print("\n--- Login / Signup ---")
+    email = input("Email: ").strip()
+
+    cur.execute("SELECT user_id, password_hash FROM users WHERE email = %s;", (email,))
+    row = cur.fetchone()
+
+    if row:
+        user_id, stored_pw = row
+        pw = input("Password: ").strip()
+        if pw != stored_pw:
+            print("Invalid password.")
+            cur.close()
+            return None
+        print(f"Welcome back, {email} (user_id={user_id})")
+        log_action(conn, user_id, "login", "User logged in")
+        cur.close()
+        return user_id
+    else:
+        print("No account found. Creating a new one.")
+        pw = input("Choose a password: ").strip()
+        cur.execute("""
+            INSERT INTO users (email, password_hash, created_at)
+            VALUES (%s, %s, CURDATE());
+        """, (email, pw))
+        user_id = cur.lastrowid
+        conn.commit()
+        log_action(conn, user_id, "signup", "New account created")
+        print(f"Account created, user_id={user_id}")
+        cur.close()
+        return user_id
+
+
+def log_meal(conn, user_id):
+    """Write action: create a meal and add items."""
+    print("\n--- Log a Meal ---")
+    date_str = input("Meal date (YYYY-MM-DD) or press Enter for today: ").strip()
+    if not date_str:
+        date_str = date.today().strftime("%Y-%m-%d")
+    meal_type = input("Meal type (breakfast/lunch/dinner/snack): ").strip().lower()
+    if meal_type not in ("breakfast", "lunch", "dinner", "snack"):
+        meal_type = "lunch"
+
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO user_meal_logs (user_id, meal_date, meal_type)
+        VALUES (%s, %s, %s);
+    """, (user_id, date_str, meal_type))
+    meal_log_id = cur.lastrowid
+    conn.commit()
+    cur.close()
+
+    while True:
+        print("\nAvailable foods:")
+        cur = conn.cursor()
+        cur.execute("SELECT food_id, food_name FROM foods ORDER BY food_id LIMIT 50;")
+        rows = cur.fetchall()
+        for fid, name in rows:
+            print(f"  {fid}: {name}")
+        cur.close()
+
+        choice = input("Enter food_id to add (or 'done'): ").strip()
+        if choice.lower() == "done":
+            break
+        try:
+            food_id = int(choice)
+        except ValueError:
+            print("Please enter a valid number.")
+            continue
+
+        amount_str = input("Amount in grams (e.g. 100): ").strip()
+        try:
+            amount = float(amount_str)
+        except ValueError:
+            print("Please enter a valid number.")
+            continue
+
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO user_meal_items (meal_log_id, food_id, serving_amount, serving_unit)
+            VALUES (%s, %s, %s, 'g');
+        """, (meal_log_id, food_id, amount))
+        conn.commit()
+        cur.close()
+        print("Added item.")
+
+    log_action(conn, user_id, "log_meal", f"Logged meal {meal_log_id} on {date_str}")
+    print("Meal logged!\n")
+
+
+def log_weight(conn, user_id):
+    """Write action: log a new weight entry."""
+    print("\n--- Log Weight ---")
+    date_str = input("Weigh date (YYYY-MM-DD) or press Enter for today: ").strip()
+    if not date_str:
+        date_str = date.today().strftime("%Y-%m-%d")
+
+    weight_str = input("Weight in kg (e.g. 75.5): ").strip()
+    try:
+        weight_kg = float(weight_str)
+    except ValueError:
+        print("Invalid number, cancelling.")
+        return
+
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO user_weight_logs (user_id, weigh_date, weight_kg)
+        VALUES (%s, %s, %s);
+    """, (user_id, date_str, weight_kg))
+    conn.commit()
+    cur.close()
+
+    log_action(conn, user_id, "log_weight", f"Logged weight {weight_kg} kg on {date_str}")
+    print("Weight logged!\n")
+
+
+#MAIN MENU
 
 def main():
-    print("Starting FitLog Nutrition demo...")
+    print("Starting FitLog Nutrition app...")
 
     try:
         # Make sure DB exists
@@ -406,15 +720,49 @@ def main():
         conn = connect_with_db()
         print("Connected to database!")
 
-        # Make sure tables + sample data exist
+        # Make sure all tables exist
         ensure_tables(conn)
-        insert_sample_data(conn)
 
-        # Run a demo query
-        show_sample_data(conn)
+        # Login / signup
+        user_id = login_or_signup(conn)
+        if not user_id:
+            print("Exiting (auth failed).")
+            conn.close()
+            return
+
+        # Main interactive loop
+        while True:
+            print("1) Log a meal")
+            print("2) Log weight")
+            print("3) View daily nutrition summary")
+            print("4) View sample foods + nutrients")
+            print("5) View top 5 high-calorie foods")
+            print("6) View global obesity statistics")
+            print("7) View weight history")
+            print("0) Quit")
+            choice = input("Choose an option: ").strip()
+
+            if choice == "1":
+                log_meal(conn, user_id)
+            elif choice == "2":
+                log_weight(conn, user_id)
+            elif choice == "3":
+                show_user_daily_summary(conn, user_id)
+            elif choice == "4":
+                show_sample_data(conn)
+            elif choice == "5":
+                show_top_calorie_foods(conn)
+            elif choice == "6":
+                show_global_obesity_stats(conn)
+            elif choice == "7":
+                show_weight_history(conn, user_id)
+            elif choice == "0":
+                break
+            else:
+                print("Invalid choice.")
 
         conn.close()
-        print("Connection closed.")
+        print("Connection closed. Goodbye!")
 
     except Error as e:
         print("Database error:", e)
